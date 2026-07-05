@@ -230,7 +230,7 @@ def sidebar():
 
 # ---------------------------------------------------------------- 메인
 def main():
-    st.title("📘 회계기준 Assistant")
+    st.title("📘 회계기준 Manager")
     if "thread" not in st.session_state:
         st.session_state.thread = "ui-" + str(int(time.time()))
         st.session_state.messages = []
