@@ -15,6 +15,7 @@ langchain==0.3.30
 langchain-core==0.3.86
 langchain-openai==0.3.35
 langgraph==0.6.11
+langgraph-checkpoint-sqlite==2.0.11
 langsmith==0.4.37
 
 # ── LLM 판사 (실시간 평가, 벤더 선택) ──
