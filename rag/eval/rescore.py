@@ -20,7 +20,8 @@ def main():
     dump = [json.loads(l) for l in
             (RESULTS / f"retrieval_{args.date}.jsonl").open(encoding="utf-8")]
     ks = (5, 10)
-    agg = {k: defaultdict(lambda: {"exact": [], "relaxed": [], "ho": [], "prec": []})
+    agg = {k: defaultdict(lambda: {"exact": [], "relaxed": [], "ho": [],
+                                   "hit": [], "prec": []})
            for k in ks}
     for d in dump:
         exp = d["expected"]
@@ -31,12 +32,13 @@ def main():
                     got.add(h["ref_key"])
                 if h.get("section_key"):
                     got.add(h["section_key"])
-            ex, rel, ho, hit = score(exp, got)
+            ex, rel, ho, hitrate, nhit = score(exp, got)
             for scope in (d["board"], "ALL"):
                 agg[k][scope]["exact"].append(ex)
                 agg[k][scope]["relaxed"].append(rel)
                 agg[k][scope]["ho"].append(ho)
-                agg[k][scope]["prec"].append(hit / k)
+                agg[k][scope]["hit"].append(hitrate)
+                agg[k][scope]["prec"].append(nhit / k)
 
     summary = summarize(agg, ks)
     # 기존 batch json의 meta 재사용(있으면), 없으면 최소 meta
@@ -53,6 +55,7 @@ def main():
     print(f"  문단 recall exact  top5={a5['exact']:.3f} top10={a10['exact']:.3f}")
     print(f"  문단 recall 인접완화 top5={a5['relaxed']:.3f} top10={a10['relaxed']:.3f}")
     print(f"  호   recall        top5={a5['ho']:.3f} top10={a10['ho']:.3f}")
+    print(f"  문단 hit rate(1개↑) top5={a5['hit']:.3f} top10={a10['hit']:.3f}")
     print("  게시판별 호(top10):",
           {b: summary[10][b]["ho"] for b in summary[10] if b != "ALL"})
 

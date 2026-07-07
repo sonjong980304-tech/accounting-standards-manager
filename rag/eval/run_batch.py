@@ -96,12 +96,15 @@ def _nk(k):
 
 
 def score(expected, got):
-    """정답 대비 3단 점수 반환: (exact_recall, relaxed_recall, ho_recall, exact_hit수).
+    """정답 대비 점수 반환: (exact_recall, relaxed_recall, ho_recall, hit_rate, exact_hit수).
 
     exact는 표기 정규화(_nk) 후 매칭 — 원문자·괄호·공백 차이는 같은 문단으로 인정.
+    hit_rate = 정답 문단을 **1개라도** 회수하면 1.0(아니면 0.0). 질의 단위 성공률(Hit@k):
+      exact_recall이 문단 개수로 나눠 다문단 인용 질의를 불리하게 잡는 것과 달리,
+      '최소 1건의 정답 근거를 확보했는가'만 본다. 항상 hit_rate ≥ exact_recall.
     """
     if not expected:
-        return 0.0, 0.0, 0.0, 0
+        return 0.0, 0.0, 0.0, 0.0, 0
     gotnorm = {_nk(g) for g in got}
     def hit(e):
         return _nk(e) in gotnorm
@@ -115,11 +118,14 @@ def score(expected, got):
     exp_ho = {ho_of(e) for e in expected if ho_of(e)}
     got_ho = {ho_of(g) for g in got if ho_of(g)}
     ho_recall = len(exp_ho & got_ho) / len(exp_ho) if exp_ho else 0.0
-    return exact_hits / len(expected), relaxed / len(expected), ho_recall, exact_hits
+    hit_rate = 1.0 if exact_hits else 0.0
+    return (exact_hits / len(expected), relaxed / len(expected), ho_recall,
+            hit_rate, exact_hits)
 
 
 def evaluate(index, golden, ks=(5, 10), per_coll=50, progress_every=50):
-    agg = {k: defaultdict(lambda: {"exact": [], "relaxed": [], "ho": [], "prec": []})
+    agg = {k: defaultdict(lambda: {"exact": [], "relaxed": [], "ho": [],
+                                   "hit": [], "prec": []})
            for k in ks}
     self_excluded = 0
     kmax = max(ks)
@@ -145,12 +151,13 @@ def evaluate(index, golden, ks=(5, 10), per_coll=50, progress_every=50):
         exp = g["expected_ref_keys"]
         for k in ks:
             got = got_keys([h["meta"] for h in hits[:k]])
-            ex, rel, ho, hit = score(exp, got)
+            ex, rel, ho, hitrate, nhit = score(exp, got)
             for scope in (g["board"], "ALL"):
                 agg[k][scope]["exact"].append(ex)
                 agg[k][scope]["relaxed"].append(rel)
                 agg[k][scope]["ho"].append(ho)
-                agg[k][scope]["prec"].append(hit / k)
+                agg[k][scope]["hit"].append(hitrate)
+                agg[k][scope]["prec"].append(nhit / k)
         dump.append({"id": g["id"], "board": g["board"], "expected": exp,
                      "hits": [{"ref_key": h["meta"].get("ref_key", ""),
                                "section_key": h["meta"].get("section_key", "")}
@@ -166,6 +173,7 @@ def summarize(agg, ks):
         out[k] = {b: {"exact": round(avg(v["exact"]), 4),
                       "relaxed": round(avg(v["relaxed"]), 4),
                       "ho": round(avg(v["ho"]), 4),
+                      "hit": round(avg(v["hit"]), 4),
                       "precision": round(avg(v["prec"]), 4),
                       "n": len(v["exact"])}
                   for b, v in agg[k].items()}
@@ -190,6 +198,9 @@ def write_markdown(summary, ks, meta, path):
          "정답 문단은 1.0, **±1 인접 문단은 0.5**점. exact가 놓치는 '옆 문단' 회수를 반영(실용 하한) |",
          f"| 호 recall — 기준서 단위 | {a5['ho']:.3f} | {a10['ho']:.3f} | "
          "올바른 **기준서(제NNNN호)**를 찾았는가. **실질 성능에 가까움**. 단, 문단 정밀도는 못 잼 |",
+         f"| 문단 hit rate — 1개↑ | {a5['hit']:.3f} | {a10['hit']:.3f} | "
+         "정답 문단을 **1개라도** 회수한 질의 비율(Hit@k). 다문단 인용 질의에서 '최소 1건 근거 확보' "
+         "성공률(항상 exact ≤ hit rate) |",
          f"| 문단 precision — exact | {a5['precision']:.3f} | {a10['precision']:.3f} | "
          "상위 k 중 정확 문단 비율 |", "",
          "### 인접완화 채점 기준 (자의적 후함 배제)",
@@ -214,11 +225,13 @@ def write_markdown(summary, ks, meta, path):
          "- **답변 품질 영향은 제한적**: 실패의 63%는 올바른 기준서를 이미 회수(호 recall "
          f"{a10['ho']:.1%})했고 인접 문단을 근거로 제시 → 사용자가 정답 문단 부근 원문을 받게 됨.", "",
          "## 게시판별 (top-10)", "",
-         "| 게시판 | 문단 exact | 인접완화 | 호 recall | n |", "|---|---|---|---|---|"]
+         "| 게시판 | 문단 exact | 인접완화 | 호 recall | 문단 hit | n |",
+         "|---|---|---|---|---|---|"]
     for b in ("016001", "016002", "016003", "016005", "016006"):
         if b in summary[10]:
             s = summary[10][b]
-            L.append(f"| {b} | {s['exact']:.3f} | {s['relaxed']:.3f} | {s['ho']:.3f} | {s['n']} |")
+            L.append(f"| {b} | {s['exact']:.3f} | {s['relaxed']:.3f} | {s['ho']:.3f} | "
+                     f"{s['hit']:.3f} | {s['n']} |")
     path.write_text("\n".join(L) + "\n", encoding="utf-8")
 
 
