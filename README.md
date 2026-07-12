@@ -7,7 +7,7 @@
 [![Open in Spaces](https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-md.svg)](https://huggingface.co/spaces/sonsdf/accounting-standards-assistant)
 
 **🤗 Live Demo → https://huggingface.co/spaces/sonsdf/accounting-standards-assistant**
-무료버전이기 때문에 다음 화면과 같이 로딩을 거쳐야 합니다.
+무료버전이기 때문에 로딩(starting)을 거쳐야 합니다.
 
 
 앱 사이드바에 본인 **OpenAI API 키**를 입력하면 바로 질문할 수 있습니다 (키는 세션 메모리에만 저장되고 파일·로그에 남지 않습니다).
