@@ -7,6 +7,8 @@
 [![Open in Spaces](https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-md.svg)](https://huggingface.co/spaces/sonsdf/accounting-standards-assistant)
 
 **🤗 Live Demo → https://huggingface.co/spaces/sonsdf/accounting-standards-assistant**
+무료버전이기 때문에 로딩(starting)을 거쳐야 합니다.
+
 
 앱 사이드바에 본인 **OpenAI API 키**를 입력하면 바로 질문할 수 있습니다 (키는 세션 메모리에만 저장되고 파일·로그에 남지 않습니다).
 
@@ -31,7 +33,7 @@
 - **멀티 LLM** — GPT 기본 / 로컬 EXAONE 옵션(폐쇄망·오프라인용).
 - **환각 방지** — 검색 근거로만 답하고, 근거가 없으면 refusal. 근거 원문은 LLM이 다시 쓰지 않고 DB 원문을 그대로 표시.
 - **감리지적사례 참고** — 관련된 금융감독원 감리지적사례가 있으면 답변과 **완전히 분리된** 참고 정보로 함께 보여줍니다(답변의 근거로는 절대 사용하지 않음).
-- **RAGAS 평가** — 검색(Recall/Precision)은 골든셋으로 기계 채점, 생성(Faithfulness/Relevancy)은 LLM 판사로 평가.
+- **RAGAS 평가** — 검색(Recall)은 골든셋으로 기계 채점, 생성(Faithfulness/Relevancy)은 LLM 판사로 평가.
 
 ---
 
