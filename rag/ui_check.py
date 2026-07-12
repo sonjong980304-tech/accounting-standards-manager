@@ -44,7 +44,13 @@ def main():
     print(f"  답변: {''.join(tokens)[:90]!r}")
     ver = final.get("verified", [])
     print(f"  근거 원문(verify): {[v['ref'] for v in ver]}")
-    assert steps[:5] == ["rewrite", "route", "retrieve", "answer", "verify"], steps
+    # rewrite는 조건부(히스토리 있으면 route 전, 없으면 검색 신뢰도 미달 시 retrieve 후 재시도)
+    # → 이번 첫 턴(히스토리 없음)은 rewrite가 아예 안 나타날 수도 있어 고정 순서 대신
+    # 상대 순서만 확인한다(rag/graph.py의 조건부 재시도 설계 참조).
+    assert {"retrieve", "answer", "verify"} <= set(steps), steps
+    assert steps.index("retrieve") < steps.index("answer") < steps.index("verify"), steps
+    if "rewrite" in steps:
+        assert steps.index("rewrite") > steps.index("route"), steps   # 없으면 재시도 경로 위반
     assert len(tokens) > 5, "answer 토큰 스트리밍 안 됨"
     assert ver, "verify 근거 없음"
     # 근거를 답변 전에 렌더하려면 retrieved에 원문·링크 메타가 있어야 함

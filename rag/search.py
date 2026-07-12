@@ -10,6 +10,7 @@
 """
 import argparse
 import re
+import threading
 
 from rag import common as C
 
@@ -58,6 +59,11 @@ class Index:
         self.colls = [n for n in (collections or names) if n in names]
         self.emb = C.load_embedder()
         self.reranker = C.load_reranker()
+        # graph.py의 retrieve/audit_lookup 노드가 이 Index를 병렬로 호출한다(같은 route
+        # 뒤에서 fan-out). HuggingFace fast tokenizer는 스레드 세이프하지 않아(내부
+        # Rust RefCell) 동시 encode/predict 호출 시 "RuntimeError: Already borrowed"로
+        # 죽는다 → 모델 호출 구간만 락으로 직렬화.
+        self._model_lock = threading.Lock()
         # 전 컬렉션 문서를 메모리에 적재 (BM25 union + 결과 렌더용)
         self.docs, self.ids, self.metas, self.doc_coll = [], [], [], []
         for cn in self.colls:
@@ -114,7 +120,8 @@ class Index:
         단 *_standards 컬렉션이 라우팅에 있으면 기준서 근거를 최소 min_standards개 포함.
         """
         colls = [c for c in collections if c in self.colls] or self.colls
-        qv = self.emb.encode([query], normalize_embeddings=True)[0].tolist()
+        with self._model_lock:
+            qv = self.emb.encode([query], normalize_embeddings=True)[0].tolist()
         cand = []   # (id, coll)
         dense_ids = []
         for cn in colls:
@@ -126,7 +133,8 @@ class Index:
         if not cand:
             return []
         if use_bm25:
-            bm25_scores = self.bm25.get_scores(tokenize(query, self.emb.tokenizer))
+            with self._model_lock:
+                bm25_scores = self.bm25.get_scores(tokenize(query, self.emb.tokenizer))
             bm25_ids = _bm25_candidates_for_collections(
                 self.ids, self.doc_coll, bm25_scores, colls, per_coll)
             fused = _rrf_merge([dense_ids, bm25_ids])
@@ -134,7 +142,8 @@ class Index:
             cand = [(i, dense_coll.get(i) or self.doc_coll[self.pos[i]])
                     for i, _ in fused[:per_coll * len(colls)]]
         pairs = [(query, self.docs[self.pos[i]]) for i, _ in cand]
-        scores = self.reranker.predict(pairs)
+        with self._model_lock:
+            scores = self.reranker.predict(pairs)
         ranked = sorted(zip(cand, scores), key=lambda x: -x[1])   # ((id,coll),score)
 
         def item(entry):

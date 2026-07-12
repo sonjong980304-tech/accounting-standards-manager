@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""LangGraph 파이프라인: rewrite → route → retrieve → answer → verify.
+"""LangGraph 파이프라인: [rewrite] → route → retrieve → [rewrite 재시도] → answer → verify.
+
+- rewrite는 조건부: 히스토리(후속질문) 있으면 route 전에 무조건 실행, 없으면 생략하고
+  retrieve 먼저 시도 → top 리랭커 점수 <0.6(RETRY_SCORE_THRESHOLD)이면 그때만 rewrite 후
+  재검색(1회 한정, 무한루프 방지). 분기 판정은 _entry_node/_after_rewrite_node/
+  _need_rewrite_retry 순수함수가 전담(tests/test_graph_retry_routing.py).
 
 - 체크포인터: SQLite(thread_id) — 대화기억 지속
 - 각 노드가 trace 로그(질문/재작성/라우팅/검색 ref_key/답변/사용 ref_key/지연) 남김
@@ -31,6 +36,39 @@ ALL_COLLS = list(C.COLLECTIONS.keys())   # 라우터 후보 — AUDIT_COLLECTION
 #   0.94로 매치된 사례 1건 — 리랭커가 '숫자조정류' 표면 유사성에 흔들린 것으로 추정, 임계값을
 #   더 올려도 해결 안 됨). 데이터가 늘거나 재관찰되면 재튜닝 필요.
 AUDIT_CASE_SCORE_THRESHOLD = 0.6
+
+# rewrite 재시도 트리거 임계값(1차 검색 top 리랭커 점수). e5f6601 관찰(정답 0.608 vs 탈락 0.012) 근거.
+RETRY_SCORE_THRESHOLD = 0.6
+
+
+def _need_rewrite_retry(retrieved, already_retried):
+    if already_retried:
+        return False
+    top = retrieved[0]["score"] if retrieved else 0.0
+    return top < RETRY_SCORE_THRESHOLD
+
+
+def _entry_node(history):
+    return "rewrite" if history else "route"
+
+
+def _after_rewrite_node(route_already_set):
+    return "retrieve" if route_already_set else "route"
+
+
+# ---- 그래프 조건부 엣지에 연결하는 얇은 state 어댑터 (분기 판정 자체는 위 순수함수가 전담) ----
+def _entry_edge(state):
+    return _entry_node(state.get("history", []))
+
+
+def _after_rewrite_edge(state):
+    return _after_rewrite_node(route_already_set=bool(state.get("route")))
+
+
+def _after_retrieve_edge(state):
+    already_retried = bool(state.get("rewritten"))
+    need_retry = _need_rewrite_retry(state.get("retrieved", []), already_retried)
+    return "rewrite" if need_retry else "answer"
 
 
 class State(TypedDict, total=False):
@@ -129,8 +167,12 @@ class Pipeline:
         BGE-M3 임베더·리랭커가 질의 표면형에 민감해, 구어체·군더더기·붙여쓴 복합어가
         있으면 정답 기준서 문단의 리랭커 점수가 무너져 검색에서 누락됨(개발비 케이스:
         '개발비의 자산인식요건 알려줘'는 제11장 11.20 점수 0.012 vs '개발비 자산 인식
-        요건' 0.608). → 매 질의를 검색 질의로 정규화한다(의미·핵심어는 보존).
-        단, 히스토리를 무조건 붙이면 주제전환 시 이전 주제가 오염됨(수익인식 대화 후
+        요건' 0.608). 단, 이 문제는 대부분 정제된 문어체 질문에는 거의 없고 구어체
+        질문에서만 발생하므로, 매 질의 무조건이 아니라 **조건부**로 호출된다(그래프
+        진입/재시도 분기는 build_graph 참조): ①히스토리(후속질문)가 있으면 맥락 해소가
+        검색 점수와 무관하게 항상 필요해 무조건 실행 ②히스토리가 없으면 1차 검색이
+        부실할 때만(top 리랭커 점수 <0.6) 재시도로 실행.
+        히스토리를 무조건 붙이면 주제전환 시 이전 주제가 오염됨(수익인식 대화 후
         파생상품 질문이 '수익인식 기준에서 파생상품~'으로 잘못 확장) → 먼저 후속/새주제를
         판단해, 후속일 때만 맥락 확장하고 새주제·애매하면 현재 질문만으로 재작성한다.
         """
@@ -144,7 +186,7 @@ class Pipeline:
 
     def route(self, state: State):
         t0 = time.time()
-        q = state["rewritten"]
+        q = state.get("rewritten") or state["question"]
         sys = ("너는 회계기준 질의 라우터다. 아래 JSON만 출력한다.\n"
                "{\"collections\": [...], \"qtype\": \"정의조회|사례시나리오|일반\"}\n"
                "컬렉션 후보: kifrs_standards(K-IFRS 기준서 문단·용어), "
@@ -199,7 +241,8 @@ class Pipeline:
     def retrieve(self, state: State):
         t0 = time.time()
         colls = state["route"]["collections"]
-        hits = self.index.retrieve_routed(state["rewritten"], colls, k=8,
+        q = state.get("rewritten") or state["question"]
+        hits = self.index.retrieve_routed(q, colls, k=8,
                                           min_standards=1, per_coll=12)
         # 답변 전에 근거 카드를 렌더할 수 있게 원문·링크 메타를 함께 실음 (LLM 재생성 아님)
         slim = [{"ref_key": h["ref_key"], "doc_no": h["doc_no"],
@@ -231,7 +274,8 @@ class Pipeline:
                 # 리랭킹하면 12초대 지연 유발(실측). dense 사전필터 20위 안에 진짜 관련
                 # 사례가 안정적으로 들어옴(스모크테스트 자기회수 점수 0.86~1.0로 확인) →
                 # 후보를 줄여도 recall 손실 거의 없이 리랭킹 비용만 3배 이상 절감.
-                hits = self.index.retrieve_routed(state["rewritten"], ["audit_cases"],
+                q = state.get("rewritten") or state["question"]
+                hits = self.index.retrieve_routed(q, ["audit_cases"],
                                                   k=3, min_standards=0, per_coll=20)
                 cases = [_audit_card(h) for h in _audit_filter(hits)]
             except Exception:   # noqa: BLE001 — 사이드카 실패는 답변에 영향 없이 조용히 무시
@@ -373,12 +417,17 @@ def build_graph(index, checkpoint_path=None, api_key=None, local=False):
     g.add_node("audit_lookup", p.audit_lookup)   # 접근법 B: retrieve와 병렬 사이드카
     g.add_node("answer", p.answer)
     g.add_node("verify", p.verify)
-    g.add_edge(START, "rewrite")
-    g.add_edge("rewrite", "route")
+    # 진입: 히스토리(후속질문 맥락 해소)가 있으면 rewrite 먼저, 없으면 route부터(비용 절감).
+    g.add_conditional_edges(START, _entry_edge, {"rewrite": "rewrite", "route": "route"})
+    # rewrite는 두 경로에서 온다: ①진입(맥락 해소, route 전) ②retrieve 재시도(route 후).
+    # route가 이미 끝났으면 재시도이므로 route를 다시 안 돌리고 retrieve로 바로 간다.
+    g.add_conditional_edges("rewrite", _after_rewrite_edge, {"route": "route", "retrieve": "retrieve"})
     # route 이후 retrieve(답변 근거)와 audit_lookup(참고용 사이드카)로 fan-out, 둘 다 answer로 합류.
     g.add_edge("route", "retrieve")
     g.add_edge("route", "audit_lookup")
-    g.add_edge("retrieve", "answer")
+    # retrieve 후 1차 검색 결과가 부실하면(top 리랭커 점수 <0.6) rewrite로 재시도(1회 한정),
+    # 아니면 바로 answer로.
+    g.add_conditional_edges("retrieve", _after_retrieve_edge, {"rewrite": "rewrite", "answer": "answer"})
     g.add_edge("audit_lookup", "answer")   # answer는 두 노드 완료 후 1회 실행(fan-in)
     g.add_edge("answer", "verify")
     g.add_edge("verify", END)
