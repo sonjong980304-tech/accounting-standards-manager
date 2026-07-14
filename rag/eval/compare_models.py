@@ -29,7 +29,7 @@ CASES = [
 ]
 
 
-def _env_openai():
+def _env_key(name):
     p = C.ROOT / ".env"
     if not p.exists():
         return None
@@ -37,7 +37,7 @@ def _env_openai():
         if line.strip().startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        if k.strip() == "OPENAI_API_KEY":
+        if k.strip() == name:
             return v.strip().strip('"').strip("'")
     return None
 
@@ -56,13 +56,16 @@ def generate(index, question, local, openai_key, tag):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--judge-vendor", required=True, help="Anthropic 또는 Google 권장")
-    ap.add_argument("--judge-key", required=True)
+    ap.add_argument("--judge-key", default=None,
+                     help="생략 시 .env의 <VENDOR대문자>_API_KEY 사용(예: GOOGLE_API_KEY)")
     ap.add_argument("--openai-key", default=None)
     args = ap.parse_args()
-    openai_key = args.openai_key or _env_openai()
+    openai_key = args.openai_key or _env_key("OPENAI_API_KEY")
     assert openai_key, "OpenAI 키 필요(GPT 답변 생성용): --openai-key 또는 .env"
+    judge_key = args.judge_key or _env_key(f"{args.judge_vendor.upper()}_API_KEY")
+    assert judge_key, f"판사 키 필요: --judge-key 또는 .env의 {args.judge_vendor.upper()}_API_KEY"
 
-    judge = Judge(args.judge_vendor, args.judge_key)
+    judge = Judge(args.judge_vendor, judge_key)
     print(f"판사: {args.judge_vendor}/{judge.model} (답변 모델 GPT·EXAONE와 다른 벤더)\n")
     print("인덱스 로드...", flush=True)
     index = Index()

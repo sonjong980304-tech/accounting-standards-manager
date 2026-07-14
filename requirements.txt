@@ -20,7 +20,7 @@ langsmith==0.4.37
 
 # ── LLM 판사 (실시간 평가, 벤더 선택) ──
 anthropic==0.102.0
-google-generativeai==0.8.6
+google-genai==2.11.0
 
 # ── UI ──
 streamlit==1.50.0

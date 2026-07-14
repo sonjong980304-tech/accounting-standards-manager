@@ -8,11 +8,12 @@
 """
 import json
 import re
+import time
 
 VENDORS = {
     "OpenAI": {"default_model": "gpt-4o-mini", "family": "openai"},
     "Anthropic": {"default_model": "claude-sonnet-5", "family": "anthropic"},
-    "Google": {"default_model": "gemini-2.0-flash", "family": "google"},
+    "Google": {"default_model": "gemini-2.5-flash-lite", "family": "google"},
 }
 
 FAITH_SYS = (
@@ -57,12 +58,21 @@ class Judge:
             import anthropic
             return anthropic.Anthropic(api_key=self.api_key)
         if self.family == "google":
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            return genai.GenerativeModel(self.model)
+            from google import genai
+            return genai.Client(api_key=self.api_key)
         raise ValueError(self.family)
 
     def _raw(self, system, user):
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                return self._raw_once(system, user)
+            except Exception:
+                if attempt == max_attempts - 1:
+                    raise
+                time.sleep(2 ** (attempt + 1))  # 일시적 서버 과부하(429/503) 대응, 2/4/8/16초
+
+    def _raw_once(self, system, user):
         if self.family == "openai":
             r = self._client.chat.completions.create(
                 model=self.model, temperature=0,
@@ -76,7 +86,11 @@ class Judge:
                 system=system, messages=[{"role": "user", "content": user}])
             return "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
         if self.family == "google":
-            r = self._client.generate_content(system + "\n\n" + user)
+            from google.genai import types
+            r = self._client.models.generate_content(
+                model=self.model, contents=system + "\n\n" + user,
+                config=types.GenerateContentConfig(
+                    temperature=0, response_mime_type="application/json"))
             return r.text
         raise ValueError(self.family)
 
