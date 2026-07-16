@@ -145,6 +145,7 @@ flowchart TD
 **② 클릭 시 우측 패널** — 사실관계·지적사항·판단근거와 금융감독원 원문 링크를 원문 그대로 보여줍니다.
 
 ![감리지적사례 참고 패널](docs/images/audit_case_panel.png)
+https://github.com/sonjong980304-tech/audit-sentinel -> AX인재전쟁 삼일회계법인편 해커톤 제출작(상위 10% 이내 성적 달성하였습니다)
 
 ---
 
