@@ -7,7 +7,7 @@
 [![OpenAI](https://img.shields.io/badge/OpenAI-LLM-412991?logo=openai&logoColor=white)](https://openai.com/)
 [![EXAONE](https://img.shields.io/badge/EXAONE-Local%20LLM-000000?logo=ollama&logoColor=white)](https://ollama.com/library/exaone3.5)
 
-한국회계기준원(KASB)의 **K-IFRS 기준서 · 일반기업회계기준 · 질의회신**을 근거로 회계 질문에 답하는 RAG를 이용한 어시스턴트입니다. **답변과 함께 그 근거가 된 기준서 원문을 그대로 보여주고** 근거로 뒷받침되지 않는 질문에는 답을 지어내지 않고 "근거를 찾지 못했습니다"라고 답변합니다. 회계 실무처럼 **출처 확인이 곧 신뢰인 도메인**에서, "그럴듯한 답"보다 "검증 가능한 답"을 우선하도록 설계했습니다.(GPT와 Exaone 모델을 사용할 수 있게 하였습니다.)
+한국회계기준원(KASB)의 **K-IFRS 기준서 · 일반기업회계기준 · 질의회신**을 근거로 회계 질문에 답하는 RAG를 이용한 어시스턴트입니다. **답변과 함께 그 근거가 된 기준서 원문을 그대로 보여주고** 근거로 뒷받침되지 않는 질문에는 답을 지어내지 않고 "근거를 찾지 못했습니다"라고 답변합니다. 회계 실무처럼 **출처 확인이 곧 신뢰인 도메인**에서, "그럴듯한 답"보다 "검증 가능한 답"을 우선하도록 설계했습니다.(GPT와 Exaone 모델을 사용할 수 있게 하였습니다. 로컬로 구동하는 Exaone에 대해서는 QLoRA 파인튜닝이 프롬프트 엔지니어링보다 실제로 더 나은지도 별도 프로젝트에서 통제 실험으로 검증했습니다 → [kasb-exaone-qlora-finetune](https://github.com/sonjong980304-tech/kasb-exaone-qlora-finetune).)
 
 ![메인 화면](docs/images/main.png)
 
