@@ -382,8 +382,16 @@ crawl/                 # 크롤러
 scripts/               # 일회성 수집·유지보수 드라이버 (run_qa_all·run_std·reparse_qa·join_eval)
 refs.py                # ref_key 정규화 공용 코어 (crawl·parsers 양쪽이 참조)
 parsers/               # HWP/PDF 파서
+tests/                 # 단위테스트 (pytest — 인용 가드·라우팅 재시도·검색·refs 등)
 data/sample/           # 공개용 소량 샘플 (구조 예시)
-eval/results/summary.md   # 검색 성능표
+eval/                  # 정의 조회 평가 (rag/eval의 RAGAS 배치 평가와는 별도 트랙)
+  ├─ build_definition_goldenset.py
+  ├─ run_definition_eval.py
+  └─ results/summary.md   # 검색 성능표
+docs/
+  ├─ images/                              # README 스크린샷
+  └─ references_search_architecture.md    # 검색 아키텍처(BM25+dense→RRF→리랭커) 설계 근거, 1차 출처 검증
+references/llm_pricing.md   # LLM 토큰 단가 1차 출처 검증 (비용 계산 근거)
 ```
 
 ---
