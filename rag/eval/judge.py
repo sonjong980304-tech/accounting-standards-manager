@@ -29,7 +29,12 @@ RELEVANCY_SYS = (
 
 
 def _extract_json(text):
-    m = re.search(r"\{.*\}", text or "", re.S)
+    # non-greedy(.*?) — Gemini가 가끔 JSON 뒤에 문장 일부를 중복 생성해 덧붙이는 결함이
+    # 있는데(예: '{"score":1.0,...}\n다.."}\n}'), 그리디(.*) 매칭은 "첫 { ~ 마지막 }"까지
+    # 다 긁어와 이 중복 꼬리까지 포함시켜 JSON 파싱이 깨졌다(2026-07-26 실측 재현).
+    # 이 모듈의 판사 프롬프트는 전부 단일 레벨 {score, reason/unsupported} 스키마라
+    # 중첩 객체가 없으므로 non-greedy로 바꿔도 안전하다.
+    m = re.search(r"\{.*?\}", text or "", re.S)
     if not m:
         return None
     try:
