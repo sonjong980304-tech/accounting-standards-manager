@@ -44,6 +44,19 @@ RE_SECTION = re.compile(
 )
 RE_HANGUL = re.compile(r"[가-힣]")
 
+# 소제목/헤딩처럼 보이는 애매한 줄 판정 (문단 경계 오귀속 방지, 2026-07-26)
+# 실제 조문 본문은 거의 항상 문장종결형(다/음/함/임/됨/까)으로 끝나는데, 소제목은
+# 명사구라 이런 종결형이 없다("재화의 판매", "원가모형", "공시" 등). 길이도 짧아야만
+# 후보로 본다 — 길고 우연히 종결형이 없는 본문 줄까지 오탐하지 않기 위한 안전장치.
+_SENTENCE_END_RE = re.compile(r"(다|음|함|임|됨|까)[.)]?$")
+MAX_ORPHAN_HEADING_LEN = 30
+
+
+def _looks_like_orphan_heading(line):
+    """직전 문단 대신 다음 문단에 속했어야 할 소제목처럼 보이는 짧은 줄인지 판정."""
+    return len(line) <= MAX_ORPHAN_HEADING_LEN and not _SENTENCE_END_RE.search(line)
+
+
 MAX_NUM_JUMP = 50  # 계열 내 번호 점프 허용치 (삭제 문단 감안, 연도 등 오탐 차단)
 # 주: 150으로 올리면 제1039호(IAS39) 등 삭제-갭 문단을 잡지만 IG/예시 번호를
 # 문단으로 오인해 오탐 폭증(제1039호 +507). 삭제-갭 복구는 섹션인식 기반의
@@ -64,6 +77,9 @@ def split_kgaap_chapter(text, chapter):
     re_para = re.compile(r"^(" + ch + r"\.\d+[A-Z]*)\s+(\S.*)$")
     records, cur = [], None
     section = ""
+    pending = []  # "다음 문단 도입부일 수 있는" 보류 중인 애매한 줄들 (lookahead 대상,
+                  # 소제목이 여러 줄에 걸치는 경우가 있어 누적한다 — 예: "재무상태표"
+                  # 다음 줄에 "재무상태표의 목적"이 또 이어지고서야 새 문단이 시작됨)
 
     def close():
         if cur is None:
@@ -86,34 +102,69 @@ def split_kgaap_chapter(text, chapter):
                 "text": sub_text.strip(),
             })
 
+    def _is_new_para(line):
+        m = re_para.match(line)
+        return m if (m and not m.group(2).lstrip().startswith("|")) else None
+
+    def flush_pending():
+        if not pending:
+            return
+        text = "\n".join(pending)
+        pending.clear()
+        if cur is not None:
+            if cur["subs"]:
+                cur["subs"][-1][1] += "\n" + text
+            else:
+                cur["pre"] += "\n" + text
+
     for raw_line in text.split("\n"):
         line = raw_line.strip()
         if not line:
             continue
-        if RE_SECTION.match(line) and len(line) < 40:
+
+        is_section = RE_SECTION.match(line) and len(line) < 40
+        m = None if is_section else _is_new_para(line)
+
+        # 보류된 줄들이 있는데 이번 줄이 새 문단 시작이 아니면: 그 줄들이 또 다른
+        # 소제목 후보(체인 계속)일 수도, 진짜 본문일 수도 있다. 아래에서 "소제목
+        # 후보인가" 판정으로 계속 쌓을지/흘려보낼지 갈린다 — 여기서는 새 문단 시작인
+        # 경우만 먼저 처리(체인 전체를 다음 문단 선두로 넘김).
+        if is_section:
+            flush_pending()
             close()
             cur = None
             section = line
             continue
-        m = re_para.match(line)
-        if m and not m.group(2).lstrip().startswith("|"):
+
+        if m:
             close()
+            lead = "\n".join(pending) if pending else None
+            pending.clear()
             cur = {"para_no": m.group(1), "section": section,
-                   "pre": m.group(2), "subs": []}
+                   "pre": (lead + "\n" + m.group(2)) if lead else m.group(2), "subs": []}
             continue
+
         sm = RE_SUBITEM.match(line)
         if sm and cur is not None:
+            flush_pending()  # 하위항목 시작 → 보류분은 체인이 아니라 진짜 본문이었다
             mark = sm.group(1)
             if cur["subs"] and ord(mark) <= ord(cur["subs"][-1][0]):
                 cur["subs"][-1][1] += "\n" + line  # 목록 재시작 → 연속 텍스트
             else:
                 cur["subs"].append([mark, sm.group(2)])
             continue
+
+        if cur is not None and _looks_like_orphan_heading(line):
+            pending.append(line)  # 소제목 체인일 수 있으므로 누적(즉시 커밋 안 함)
+            continue
+
         if cur is not None:
+            flush_pending()  # 문장종결형 연속 본문 → 보류분은 진짜 본문이었다
             if cur["subs"]:
                 cur["subs"][-1][1] += "\n" + line
             else:
                 cur["pre"] += "\n" + line
+    flush_pending()
     close()
     return records
 
@@ -245,6 +296,41 @@ def _suffix_key(suffix):
     return suffix or ""
 
 
+def _match_para_start(line, last_in_series, seen_in_series):
+    """줄이 유효한 새 문단 시작인지 판정만 하고 상태(last_in_series/seen_in_series)는
+    바꾸지 않는다(lookahead에서 안전하게 미리보기용으로 재사용하기 위함).
+
+    반환: (prefix, num, num_s, suffix, rest) 또는 유효하지 않으면 None.
+    """
+    m = RE_PARA_START.match(line)
+    if not m:
+        gm = RE_PARA_START_GLUED.match(line)
+        if gm and gm.group(4)[0] not in COUNTER_CHARS:
+            m = gm
+    if not m:
+        return None
+    prefix, num_s, suffix, rest = m.group(1) or "", m.group(2), m.group(3), m.group(4)
+    num = tuple(int(x) for x in num_s.split("."))
+    hangul_ok = bool(RE_HANGUL.search(rest[:60])) or rest.startswith("[")
+    if rest.lstrip().startswith("|"):
+        hangul_ok = False
+    if not hangul_ok:
+        return None
+    last = last_in_series.get(prefix)
+    seen = seen_in_series.get(prefix, set())
+    if last is None:
+        lead_max = 1 if not prefix else 5
+        order_ok = (num[0] <= lead_max and not suffix)
+    else:
+        order_ok = (
+            (num > last and num[0] - last[0] <= MAX_NUM_JUMP)
+            or (num == last and (num, _suffix_key(suffix)) not in seen)
+        )
+    if not order_ok:
+        return None
+    return prefix, num, num_s, suffix, rest
+
+
 def split_standard(text, std_no):
     """기준서 전문 텍스트를 문단 레코드 목록으로 분리.
 
@@ -258,6 +344,19 @@ def split_standard(text, std_no):
     seen_in_series = {}   # prefix → {(num, suffix)} — 동일 번호 재등장 차단
     section = ""
     cur = None            # 진행 중 문단: {"para_no","series","section","pre","subs"}
+    pending = []          # "다음 문단 도입부일 수 있는" 보류 중인 애매한 줄들 (누적 —
+                          # 소제목이 여러 줄에 걸치는 경우가 있어 한 줄만으론 부족함)
+
+    def flush_pending():
+        if not pending:
+            return
+        text = "\n".join(pending)
+        pending.clear()
+        if cur is not None:
+            if cur["subs"]:
+                cur["subs"][-1][1] += "\n" + text
+            else:
+                cur["pre"] += "\n" + text
 
     def close_current():
         if cur is None:
@@ -289,55 +388,36 @@ def split_standard(text, std_no):
         if not line:
             continue
 
-        if RE_SECTION.match(line) and len(line) < 40:
+        is_section = RE_SECTION.match(line) and len(line) < 40
+        matched = None if is_section else _match_para_start(line, last_in_series, seen_in_series)
+
+        if is_section:
+            flush_pending()
             close_current()
             cur = None
             section = line
             continue
 
-        m = RE_PARA_START.match(line)
-        if not m:
-            gm = RE_PARA_START_GLUED.match(line)
-            if gm and gm.group(4)[0] not in COUNTER_CHARS:
-                m = gm
-        if m:
-            prefix, num_s, suffix, rest = m.group(1) or "", m.group(2), m.group(3), m.group(4)
-            num = tuple(int(x) for x in num_s.split("."))  # "4.1.2" → (4,1,2)
-            hangul_ok = bool(RE_HANGUL.search(rest[:60])) or rest.startswith("[")
-            if rest.lstrip().startswith("|"):
-                hangul_ok = False  # 표 행("5 | …")은 문단 시작이 아님
+        if matched:
+            prefix, num, num_s, suffix, rest = matched
+            close_current()
             last = last_in_series.get(prefix)
-            seen = seen_in_series.setdefault(prefix, set())
-            if last is None:
-                # 새 계열 시작: 본문은 1(또는 1.1)부터. 접두 계열(B, BC 등)은
-                # 본문 장 번호를 따라가므로(예: 1109의 B3.1.1) 선두 5까지 허용
-                lead_max = 1 if not prefix else 5
-                order_ok = (num[0] <= lead_max and not suffix)
-            else:
-                # 숫자부만 단조 증가 요구. 접미사는 사전순을 강제하지 않음
-                # (제1001호가 76 → 76ZA → 76A → 76B 순서로 배치됨) —
-                # 동일 (번호, 접미사) 재등장만 차단
-                order_ok = (
-                    (num > last and num[0] - last[0] <= MAX_NUM_JUMP)
-                    or (num == last
-                        and (num, _suffix_key(suffix)) not in seen)
-                )
-            if hangul_ok and order_ok:
-                close_current()
-                last_in_series[prefix] = max(last, num) if last else num
-                seen.add((num, _suffix_key(suffix)))
-                cur = {
-                    "para_no": prefix + num_s + suffix,
-                    "series": prefix or "본문",
-                    "section": section,
-                    "pre": rest,
-                    "subs": [],
-                }
-                continue
-            # 게이트 탈락 → 문단 시작이 아니라 본문 연속으로 취급 (아래로 폴스루)
+            last_in_series[prefix] = max(last, num) if last else num
+            seen_in_series.setdefault(prefix, set()).add((num, _suffix_key(suffix)))
+            lead = "\n".join(pending) if pending else None
+            pending.clear()
+            cur = {
+                "para_no": prefix + num_s + suffix,
+                "series": prefix or "본문",
+                "section": section,
+                "pre": (lead + "\n" + rest) if lead else rest,
+                "subs": [],
+            }
+            continue
 
         sm = RE_SUBITEM.match(line)
         if sm and cur is not None:
+            flush_pending()  # 하위항목 시작 → 보류분은 체인이 아니라 진짜 본문이었다
             mark = sm.group(1)
             if cur["subs"] and ord(mark) <= ord(cur["subs"][-1][0]):
                 # 같은 문단 안에서 ⑴⑵… 목록이 재시작 (예: 제1001호 문단 7
@@ -348,12 +428,18 @@ def split_standard(text, std_no):
                 cur["subs"].append([mark, sm.group(2)])
             continue
 
+        if cur is not None and _looks_like_orphan_heading(line):
+            pending.append(line)  # 소제목 체인일 수 있으므로 누적(즉시 커밋 안 함)
+            continue
+
         # 연속 라인: 열린 하위항목 > 열린 문단 순으로 덧붙임. 문단 밖(표지 등)은 버림
         if cur is not None:
+            flush_pending()  # 문장종결형 연속 본문 → 보류분은 진짜 본문이었다
             if cur["subs"]:
                 cur["subs"][-1][1] += "\n" + line
             else:
                 cur["pre"] += "\n" + line
 
+    flush_pending()
     close_current()
     return records
