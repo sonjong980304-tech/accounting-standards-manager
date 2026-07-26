@@ -18,6 +18,8 @@ RRF_K = 60
 POOL_PER = 50      # 각 검색기(BM25/dense) 상위 N
 RERANK_N = 30      # 리랭킹 후보 수
 TOP = 5
+RERANK_MAX_LEN = 512        # common.load_reranker 기본값과 동일(대부분 쌍은 이 길이로 충분)
+RERANK_MAX_LEN_LONG = 1024  # 512 넘는 소수 쌍만 이 길이로 재토큰화(전체 적용 대비 속도 절충)
 
 
 def tokenize(text, tokenizer):
@@ -48,6 +50,44 @@ def _bm25_candidates_for_collections(ids, doc_coll, scores, colls, per_coll):
     pool = [(i, s) for i, c, s in zip(ids, doc_coll, scores) if c in coll_set]
     pool.sort(key=lambda x: -x[1])
     return [i for i, _ in pool[:per_coll * len(colls)]]
+
+
+def _rerank(reranker, pairs, lock=None):
+    """(질문,문서) pairs를 리랭킹. 512토큰 넘는 쌍만 선택적으로 1024로 재토큰화해
+    속도(짧은 쌍 다수)와 정확도(긴 쌍 소수의 절단 완화)를 절충한다.
+
+    반환: pairs와 동일한 순서의 점수 리스트. lock이 주어지면 predict 호출 구간을
+    통째로 그 락으로 감싼다(HuggingFace fast tokenizer가 스레드세이프하지 않아
+    동시 호출 시 크래시하므로 — Index._model_lock과 동일한 이유).
+    """
+    if not pairs:
+        return []
+    if lock is not None:
+        with lock:
+            return _rerank_unlocked(reranker, pairs)
+    return _rerank_unlocked(reranker, pairs)
+
+
+def _rerank_unlocked(reranker, pairs):
+    tok = reranker.tokenizer
+    enc = tok(pairs, truncation=False, padding=False)
+    lengths = [len(ids) for ids in enc["input_ids"]]
+    short_idx = [i for i, n in enumerate(lengths) if n <= RERANK_MAX_LEN]
+    long_idx = [i for i, n in enumerate(lengths) if n > RERANK_MAX_LEN]
+
+    scores = [None] * len(pairs)
+    if short_idx:
+        tok.model_max_length = RERANK_MAX_LEN
+        for i, s in zip(short_idx, reranker.predict([pairs[i] for i in short_idx])):
+            scores[i] = s
+    if long_idx:
+        tok.model_max_length = RERANK_MAX_LEN_LONG
+        try:
+            for i, s in zip(long_idx, reranker.predict([pairs[i] for i in long_idx])):
+                scores[i] = s
+        finally:
+            tok.model_max_length = RERANK_MAX_LEN
+    return scores
 
 
 class Index:
@@ -101,7 +141,7 @@ class Index:
         pre = [i for i, _ in fused[:RERANK_N]]
         # 리랭킹
         pairs = [(query, self.docs[self.pos[i]]) for i in pre]
-        rr = self.reranker.predict(pairs)
+        rr = _rerank(self.reranker, pairs)
         reranked = sorted(zip(pre, rr), key=lambda x: -x[1])
         return {
             "pre": [(i, rrf[i]) for i in pre[:TOP]],
@@ -142,8 +182,7 @@ class Index:
             cand = [(i, dense_coll.get(i) or self.doc_coll[self.pos[i]])
                     for i, _ in fused[:per_coll * len(colls)]]
         pairs = [(query, self.docs[self.pos[i]]) for i, _ in cand]
-        with self._model_lock:
-            scores = self.reranker.predict(pairs)
+        scores = _rerank(self.reranker, pairs, lock=self._model_lock)
         ranked = sorted(zip(cand, scores), key=lambda x: -x[1])   # ((id,coll),score)
 
         def item(entry):
