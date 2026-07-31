@@ -30,6 +30,12 @@ huggingface_hub>=0.25
 
 # ── 데이터 파싱 (구형 PDF) ──
 pdfplumber==0.11.8
+pypdf==6.14.2
+
+# ── 크롤러 (crawl/) — 목록·상세 HTML 파싱 ──
+requests==2.34.2
+beautifulsoup4==4.15.0
+lxml==6.1.1
 
 # ── 환경변수 ──
 python-dotenv==1.2.1

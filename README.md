@@ -422,3 +422,5 @@ references/llm_pricing.md   # LLM 토큰 단가 1차 출처 검증 (비용 계�
 ---
 
 *made by gyuyeong*
+
+데이터는 매일 새벽 6시 자동으로 증분 갱신됩니다(신규 질의회신·기준서 크롤링 → 변경분만 임베딩).
