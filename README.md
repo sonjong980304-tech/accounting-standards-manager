@@ -275,8 +275,7 @@ GPT·Gemini는 API 호출이라 배포판(Spaces)에서도 쓸 수 있고, EXAON
 > "핵심 결론을 말하기 전에, 그 결론의 근거가 되는 근거 원문 문장을 [식별자] 인용과 함께 그대로
 > 한 번 옮겨 적은 뒤 결론을 서술하라(원문을 바꿔 쓰지 말 것)."
 
-**근거 논문**: Zhang et al. 2024, *RAFT: Adapting Language Model to Domain Specific RAG*
-([arXiv:2403.10131](https://arxiv.org/abs/2403.10131))의 CoT+원문 축어인용(verbatim quote) 포맷.
+**근거 논문**: Zhang et al. 2024, **RAFT: Adapting Language Model to Domain Specific RAG**의 CoT+원문 축어인용(verbatim quote) 포맷.
 논문 내용을 참고하여 검증된 문구를 **같은 13케이스·같은 Gemini 판사**로 EXAONE와 GPT-5.4-mini
 둘 다에 적용해봤습니다.
 
