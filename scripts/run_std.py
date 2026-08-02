@@ -24,6 +24,6 @@ logger.addHandler(_sh)
 
 print("########## {} ({}) 수집 시작 ##########".format(board, STD_BOARDS[board]["source"]),
       flush=True)
-saved, skipped = crawl_standards(board)
-print("\n########## {} 완료: 신규 {}건, 스킵 {}건 ##########".format(board, saved, skipped),
-      flush=True)
+saved, skipped, recollected = crawl_standards(board)
+print("\n########## {} 완료: 신규 {}건, 개정 재수집 {}건, 스킵 {}건 ##########".format(
+    board, saved, recollected, skipped), flush=True)

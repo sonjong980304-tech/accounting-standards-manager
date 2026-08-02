@@ -11,9 +11,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PARSED = ROOT / "data" / "parsed"
-CHROMA_DIR = ROOT / "data" / "chroma"
+CHROMA_DIR = Path(os.environ.get("KASB_CHROMA_DIR", str(ROOT / "data" / "chroma")))
 
-EMB_MODEL = "BAAI/bge-m3"
+EMB_MODEL = os.environ.get("KASB_EMB_MODEL", "BAAI/bge-m3")
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
 MAX_SEQ = 8192          # 8192 초과 레코드는 자동 절단 (13건, 병합 아티팩트)
 EMB_DIM = 1024
@@ -101,7 +101,10 @@ def to_metadata(rec, coll):
 
 
 def iter_records(collections=None):
-    """(collection, file, lineno, record) 스트림. id = f'{file}:{lineno}' (재개용 안정키).
+    """(collection, file, doc_idx, record) 스트림. doc_idx = **그 문서 안에서의** 순번.
+
+    파일 전체 줄번호가 아니라 문서(doc_no) 내 순번을 주는 이유는 record_id 안정성 때문이다
+    (기준서 1건 재수집으로 레코드 수가 바뀌어도 다른 문서의 id 가 밀리지 않게).
 
     collections 미지정 시 기본 COLLECTIONS. AUDIT_COLLECTIONS 등 다른 매핑을 넘겨 재사용 가능.
     """
@@ -110,12 +113,36 @@ def iter_records(collections=None):
             path = PARSED / fn
             if not path.exists():
                 continue
-            for i, line in enumerate(path.open(encoding="utf-8")):
-                yield coll, fn, i, json.loads(line)
+            seen = {}
+            for line in path.open(encoding="utf-8"):
+                rec = json.loads(line)
+                key = _doc_key(fn, rec)
+                idx = seen.get(key, 0)
+                seen[key] = idx + 1
+                yield coll, fn, idx, rec
 
 
-def record_id(fn, lineno):
-    return "{}:{}".format(fn.replace(".jsonl", ""), lineno)
+def _doc_key(fn, rec):
+    """레코드가 속한 '문서'의 안정 식별자.
+
+    post_id(게시판-seq, 사이트가 보장하는 고유키) > doc_no > case_id > 파일명 순.
+    질의회신의 doc_no 는 첨부 파일명에서 뽑은 공식번호라 파일명이 바뀌면 흔들릴 수 있어
+    post_id 를 우선한다(기준서에는 post_id 가 없고 doc_no 가 곧 board-seq).
+    """
+    return (rec.get("post_id") or rec.get("doc_no") or rec.get("case_id")
+            or fn.replace(".jsonl", ""))
+
+
+def record_id(fn, rec, doc_idx=0):
+    """Chroma 문서 id. '{문서키}#{문서 내 안정키}'.
+
+    안정키는 ref_key(문단/용어) → section_key → 문서 내 순번(질의회신·감리사례처럼
+    ref_key 가 없는 레코드) 순으로 고른다. 줄번호 기반이던 옛 체계와 달리, 어떤 문서를
+    재수집해 레코드 수가 달라져도 **다른 문서의 id 는 변하지 않는다**.
+    """
+    stable = rec.get("ref_key") or rec.get("section_key")
+    return "{}#{}".format(_doc_key(fn, rec),
+                          stable if stable else doc_idx)
 
 
 # ------------------------------------------------------------------ 모델

@@ -48,6 +48,7 @@ def run_standards():
         try:
             results[board_id] = crawl_standards(board_id)
             print(f"[{board_id}] 신규 {results[board_id][0]}건, "
+                  f"개정 재수집 {results[board_id][2]}건, "
                   f"기수집 {results[board_id][1]}건 스킵", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"[{board_id}] 실패: {e!r}", flush=True)
@@ -63,15 +64,18 @@ def main():
 
     results = {**run_qa(), **run_standards()}
     new_total = sum(v[0] for v in results.values() if v)
+    # 기준서 개정 재수집분(3-튜플의 3번째)도 임베딩 대상 — 신규 글이 0건이어도 문단이 바뀜
+    recollected = sum(v[2] for v in results.values() if v and len(v) > 2)
     failed = [b for b, v in results.items() if v is None]
-    print(f"\n크롤링 완료: 신규 {new_total}건 (소요 {time.time() - t0:.0f}s)"
+    print(f"\n크롤링 완료: 신규 {new_total}건, 개정 재수집 {recollected}건"
+          f" (소요 {time.time() - t0:.0f}s)"
           + (f" · 실패 게시판: {failed}" if failed else ""), flush=True)
 
     if args.no_embed:
         print("임베딩 스킵(--no-embed).", flush=True)
         return
-    if new_total == 0:
-        print("신규 문서 없음 — 임베딩 스킵.", flush=True)
+    if new_total == 0 and recollected == 0:
+        print("신규·개정 문서 없음 — 임베딩 스킵.", flush=True)
         return
 
     from rag import embed

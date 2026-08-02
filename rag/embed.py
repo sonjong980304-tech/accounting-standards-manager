@@ -52,7 +52,7 @@ def run(collections=None):
         text = C.embed_text(rec)
         if not text.strip():
             continue
-        buckets[coll].append((C.record_id(fn, i), text, C.to_metadata(rec, coll)))
+        buckets[coll].append((C.record_id(fn, rec, i), text, C.to_metadata(rec, coll)))
 
     print("적재 대상:", {k: len(v) for k, v in buckets.items()}, flush=True)
     client = C.get_chroma()

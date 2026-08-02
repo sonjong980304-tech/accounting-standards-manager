@@ -8,7 +8,8 @@ def main():
     for coll, fn, i, rec in C.iter_records():
         if rec.get("record_type") != "term":
             continue
-        targets.append((coll, C.record_id(fn, i), C.embed_text(rec), C.to_metadata(rec, coll)))
+        targets.append((coll, C.record_id(fn, rec, i), C.embed_text(rec),
+                        C.to_metadata(rec, coll)))
     print(f"재임베딩 대상 용어 레코드: {len(targets)}건", flush=True)
     client = C.get_chroma()
     emb = C.load_embedder()
